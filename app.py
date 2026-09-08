@@ -186,34 +186,89 @@ with tabs[0]:
 
 # Season bests
 with tabs[1]:
-    st.subheader("2026 season bests")
-    x = f.dropna(subset=["time_sec"]).sort_values("time_sec")
-    x = x.groupby(
-        ["gender", "athlete", "team", "distance_m"],
-        as_index=False,
-    ).first()
-    x["Season Best"] = x["time_sec"].map(fmt)
-    x["Distance"] = x["distance_m"].map(fmt_distance)
+    st.subheader("🏆 2026 Season Bests")
+    st.caption("Fastest individual performances for the selected race distance.")
 
-    x = x.sort_values(["gender", "time_sec"])
-    x.insert(0, "Rank", range(1, len(x) + 1))
+    season_distances = sorted(f["distance_m"].dropna().unique().tolist())
 
-    st.dataframe(
-        x[
-            [
-                "Rank",
-                "gender",
-                "athlete",
-                "team",
-                "Distance",
-                "Season Best",
-                "meet",
-                "date",
+    if not season_distances:
+        st.warning("No race-distance data is available.")
+    else:
+        dcol, gcol, tcol = st.columns(3)
+
+        with dcol:
+            season_distance_label = st.selectbox(
+                "Race distance",
+                [fmt_distance(d) for d in season_distances],
+                key="season_best_distance",
+            )
+            season_distance = next(
+                d for d in season_distances
+                if fmt_distance(d) == season_distance_label
+            )
+
+        with gcol:
+            season_gender = st.selectbox(
+                "Gender",
+                ["Boys", "Girls", "All"],
+                key="season_best_gender",
+            )
+
+        with tcol:
+            season_team = st.selectbox(
+                "Team",
+                ["All"] + sorted(
+                    f["team"].dropna().astype(str).unique().tolist()
+                ),
+                key="season_best_team",
+            )
+
+        x = f[
+            f["distance_m"].sub(season_distance).abs().lt(75)
+        ].dropna(subset=["time_sec"]).copy()
+
+        if season_gender != "All":
+            x = x[
+                x["gender"].astype(str).str.lower()
+                == season_gender.lower()
             ]
-        ],
-        hide_index=True,
-        use_container_width=True,
-    )
+
+        if season_team != "All":
+            x = x[x["team"].astype(str) == season_team]
+
+        # One season-best mark per athlete at the selected distance.
+        x = x.sort_values("time_sec")
+        x = x.groupby(
+            ["gender", "athlete", "team"],
+            as_index=False,
+        ).first()
+
+        x["Season Best"] = x["time_sec"].map(fmt)
+        x["Distance"] = season_distance_label
+        x = x.sort_values("time_sec").reset_index(drop=True)
+        x.insert(0, "Rank", range(1, len(x) + 1))
+
+        st.metric(
+            f"{season_distance_label} Season-Best Performances",
+            f"{len(x):,}",
+        )
+
+        st.dataframe(
+            x[
+                [
+                    "Rank",
+                    "gender",
+                    "athlete",
+                    "team",
+                    "Distance",
+                    "Season Best",
+                    "meet",
+                    "date",
+                ]
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
 
 # Team rankings
 with tabs[2]:
