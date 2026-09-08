@@ -44,6 +44,49 @@ def fmt_distance(m):
     return f"{m:.0f}m"
 
 
+def athlete_best(df):
+    x = df.dropna(subset=["time_sec"]).copy()
+    if x.empty:
+        return x
+    return (
+        x.sort_values("time_sec")
+        .groupby(["gender", "athlete", "team", "distance_m"], as_index=False)
+        .first()
+    )
+
+
+def projected_team(df, team_name, gender, distance_m, n=7):
+    x = df[
+        (df["team"].astype(str) == team_name)
+        & (df["gender"].astype(str).str.lower() == gender.lower())
+        & (df["distance_m"].sub(distance_m).abs().lt(75))
+    ].dropna(subset=["time_sec"]).copy()
+
+    if x.empty:
+        return x
+
+    # Best mark per athlete at this distance.
+    x = (
+        x.sort_values("time_sec")
+        .groupby(["athlete", "team"], as_index=False)
+        .first()
+        .sort_values("time_sec")
+        .head(n)
+        .reset_index(drop=True)
+    )
+    x["runner_number"] = range(1, len(x) + 1)
+    x["xc_points"] = x["runner_number"].apply(
+        lambda r: r if r <= 5 else np.nan
+    )
+    return x
+
+
+def score_from_times(times):
+    if len(times) < 5:
+        return np.nan
+    return float(sum(sorted(times)[:5]))
+
+
 def fmt_gap(v):
     if pd.isna(v):
         return "—"
@@ -158,6 +201,7 @@ tabs = st.tabs([
     "🏫 Team Rankings",
     "🔵 West Torrance",
     "⚔️ Team Matchup",
+    "🎯 Where Do We Stand?",
     "📅 Meets",
 ])
 
@@ -370,56 +414,122 @@ with tabs[2]:
 
 # West Torrance
 with tabs[3]:
-    st.subheader("🔵 West Torrance")
+    st.subheader("🔵 West Torrance Team Dashboard")
+
     wt = df[
-        df["team"].astype(str).str.contains(
-            "West Torrance", case=False, na=False
-        )
-    ].dropna(subset=["time_sec"]).copy()
+        df["team"].astype(str).str.contains("West Torrance", case=False, na=False)
+    ].copy()
 
     if wt.empty:
         st.warning("No West Torrance results found in the current database.")
     else:
-        best = wt.sort_values("time_sec").groupby(
-            ["gender", "athlete", "distance_m"],
-            as_index=False,
-        ).first()
-        best["Season Best"] = best["time_sec"].map(fmt)
-        best["Distance"] = best["distance_m"].map(fmt_distance)
+        wt_distances = sorted(wt["distance_m"].dropna().unique().tolist())
+        wcol1, wcol2 = st.columns(2)
 
-        for g in ["Boys", "Girls"]:
-            z = best[best["gender"].astype(str).str.lower() == g.lower()].sort_values(
-                "time_sec"
-            ).copy()
+        with wcol1:
+            wt_gender = st.selectbox(
+                "Gender",
+                ["Boys", "Girls"],
+                key="wt_gender",
+            )
+        with wcol2:
+            wt_distance_label = st.selectbox(
+                "Race distance",
+                [fmt_distance(d) for d in wt_distances],
+                key="wt_distance",
+            )
+            wt_distance = next(
+                d for d in wt_distances
+                if fmt_distance(d) == wt_distance_label
+            )
 
-            if z.empty:
-                continue
+        wt_filtered = wt[
+            (wt["gender"].astype(str).str.lower() == wt_gender.lower())
+            & (wt["distance_m"].sub(wt_distance).abs().lt(75))
+        ].dropna(subset=["time_sec"]).copy()
 
-            st.markdown(f"### {g}")
+        best = (
+            wt_filtered.sort_values("time_sec")
+            .groupby(["athlete", "team"], as_index=False)
+            .first()
+            .sort_values("time_sec")
+            .reset_index(drop=True)
+        )
 
-            vals = z["time_sec"].to_numpy()
-            a, b, c, d = st.columns(4)
-            a.metric("#1", fmt(vals[0]))
-            b.metric("5-runner avg", fmt(np.mean(vals[:5])) if len(vals) >= 5 else "—")
-            c.metric("7-runner avg", fmt(np.mean(vals[:7])) if len(vals) >= 7 else "—")
-            d.metric("Runners", len(vals))
+        if best.empty:
+            st.info("No West Torrance results for this distance/category.")
+        else:
+            best["Season Best"] = best["time_sec"].map(fmt)
+            best["Gap to #1"] = (best["time_sec"] - best["time_sec"].iloc[0]).map(fmt_gap)
+            best["Gap to Runner Ahead"] = (
+                best["time_sec"].diff().map(fmt_gap)
+            )
+            best["Rank"] = range(1, len(best) + 1)
 
-            z.insert(0, "Rank", range(1, len(z) + 1))
+            vals = best["time_sec"].to_numpy()
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Fastest", fmt(vals[0]))
+            k2.metric("5-runner avg", fmt(np.mean(vals[:5])) if len(vals) >= 5 else "—")
+            k3.metric("7-runner avg", fmt(np.mean(vals[:7])) if len(vals) >= 7 else "—")
+            k4.metric("Depth to #7", fmt_gap(vals[6] - vals[0]) if len(vals) >= 7 else "—")
+
+            st.markdown("### Team depth chart")
+            depth = best[["Rank", "athlete", "grade", "Season Best", "Gap to #1", "Gap to Runner Ahead", "meet", "date"]].copy()
+            st.dataframe(depth, hide_index=True, use_container_width=True)
+
+            st.markdown("### Athlete progression")
+            athlete = st.selectbox(
+                "Select athlete",
+                best["athlete"].tolist(),
+                key="wt_athlete",
+            )
+            hist = wt_filtered[
+                wt_filtered["athlete"].astype(str) == athlete
+            ].sort_values("date").copy()
+
+            if not hist.empty:
+                hist["Display Time"] = hist["time_sec"].map(fmt)
+                chart = hist.set_index("date")[["time_sec"]]
+                st.line_chart(chart)
+                first = hist["time_sec"].iloc[0]
+                latest = hist["time_sec"].iloc[-1]
+                sb = hist["time_sec"].min()
+                c1, c2, c3 = st.columns(3)
+                c1.metric("First race", fmt(first))
+                c2.metric("Latest", fmt(latest), delta=f"{latest-first:+.1f}s")
+                c3.metric("Season best", fmt(sb))
+
+            st.markdown("### Projected XC lineup")
+            st.caption("Uses season-best times as a baseline. Actual meet scoring can differ by course and race field.")
+
+            lineup = best.head(7).copy()
+            lineup["Projected Points"] = [1, 2, 3, 4, 5, "—", "—"][:len(lineup)]
+            lineup["Time"] = lineup["time_sec"].map(fmt)
+            lineup["Gap"] = (lineup["time_sec"] - lineup["time_sec"].iloc[0]).map(fmt_gap)
             st.dataframe(
-                z[
-                    [
-                        "Rank",
-                        "athlete",
-                        "grade",
-                        "Distance",
-                        "Season Best",
-                        "meet",
-                        "date",
-                    ]
-                ],
+                lineup[["Rank", "athlete", "grade", "Time", "Gap", "Projected Points"]],
                 hide_index=True,
                 use_container_width=True,
             )
+
+            st.markdown("### Biggest season improvements")
+            improvements = []
+            for athlete_name, h in wt_filtered.groupby("athlete"):
+                h = h.sort_values("date")
+                if len(h) >= 2:
+                    improvements.append({
+                        "Athlete": athlete_name,
+                        "First": h["time_sec"].iloc[0],
+                        "Best": h["time_sec"].min(),
+                        "Improvement": h["time_sec"].iloc[0] - h["time_sec"].min(),
+                    })
+            imp = pd.DataFrame(improvements)
+            if not imp.empty:
+                imp = imp.sort_values("Improvement", ascending=False)
+                imp["First"] = imp["First"].map(fmt)
+                imp["Best"] = imp["Best"].map(fmt)
+                imp["Improvement"] = imp["Improvement"].map(lambda x: f"-{x:.1f}s")
+                st.dataframe(imp, hide_index=True, use_container_width=True)
 
 # Team matchup
 with tabs[4]:
@@ -479,8 +589,80 @@ with tabs[4]:
         else:
             st.info("Both teams need at least five runners in the selected category.")
 
-# Meets
+# Where do we stand?
 with tabs[5]:
+    st.subheader("🎯 Where Do We Stand?")
+    st.caption("Quick competitive snapshot using season-best depth at a selected distance.")
+
+    all_teams = sorted(df["team"].dropna().astype(str).unique().tolist())
+    distances = sorted(df["distance_m"].dropna().unique().tolist())
+
+    if all_teams and distances:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            wd_team = st.selectbox(
+                "Team",
+                all_teams,
+                index=all_teams.index("West Torrance") if "West Torrance" in all_teams else 0,
+                key="wd_team",
+            )
+        with c2:
+            wd_gender = st.selectbox("Gender", ["Boys", "Girls"], key="wd_gender")
+        with c3:
+            wd_label = st.selectbox(
+                "Distance",
+                [fmt_distance(d) for d in distances],
+                key="wd_distance",
+            )
+            wd_dist = next(d for d in distances if fmt_distance(d) == wd_label)
+
+        rows = []
+        for team in all_teams:
+            z = projected_team(df, team, wd_gender, wd_dist, 7)
+            if len(z) >= 5:
+                score = score_from_times(z["time_sec"].tolist())
+                rows.append({
+                    "Team": team,
+                    "Score": score,
+                    "5 Avg": np.mean(z["time_sec"].head(5)),
+                    "7 Depth": z["time_sec"].iloc[6] - z["time_sec"].iloc[0] if len(z) >= 7 else np.nan,
+                    "Runners": len(z),
+                })
+
+        standings = pd.DataFrame(rows).sort_values("Score").reset_index(drop=True)
+        if not standings.empty:
+            standings["Rank"] = range(1, len(standings) + 1)
+            me = standings[standings["Team"] == wd_team]
+            if not me.empty:
+                rank = int(me["Rank"].iloc[0])
+                score = me["Score"].iloc[0]
+                ahead = standings[standings["Rank"] == rank - 1]
+                behind = standings[standings["Rank"] == rank + 1]
+
+                a, b, c = st.columns(3)
+                a.metric("Projected rank", f"#{rank}")
+                b.metric("Projected score", f"{score:.0f}")
+                if not ahead.empty:
+                    b = behind
+                    c.metric("Behind next team", f"{score - standings.loc[rank-2, 'Score']:.0f} pts")
+                elif rank == 1:
+                    c.metric("Standing", "Projected #1")
+                else:
+                    c.metric("Standing", "—")
+
+            display = standings.copy()
+            display["Score"] = display["Score"].map(lambda x: f"{x:.0f}")
+            display["5 Avg"] = display["5 Avg"].map(fmt)
+            display["7 Depth"] = display["7 Depth"].map(lambda x: fmt_gap(x))
+            st.dataframe(
+                display[["Rank", "Team", "Score", "5 Avg", "7 Depth", "Runners"]],
+                hide_index=True,
+                use_container_width=True,
+            )
+
+
+# Meets
+with tabs[6]:
     st.subheader("2026 meet calendar")
     if not meets.empty:
         st.dataframe(
