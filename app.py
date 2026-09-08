@@ -142,6 +142,12 @@ def load_results():
             df[c] = ""
         df[c] = df[c].fillna("").astype(str).str.strip()
 
+    # Exclude duplicate/administrative "Merge" races from analytics.
+    # Meets such as Great Cow Run can contain both a Merge race and the
+    # actual Varsity/Sophomore/etc. races. The Merge race is redundant,
+    # so it should not appear in rankings, athlete histories, or profiles.
+    df = df[~df["race"].str.contains(r"\bmerge\b", case=False, regex=True, na=False)].copy()
+
     # Remove obvious PDF column-merge/corrupt records.
     bad_team = df["team"].str.contains(r"\)\s+\d+\s+[A-Z][A-Za-z'-]+", regex=True, na=False)
     bad_athlete = df["athlete"].str.contains(r"\s+\d{1,2}\s+[A-Z][A-Za-z'-]+\s+\d{1,2}\s+", regex=True, na=False)
