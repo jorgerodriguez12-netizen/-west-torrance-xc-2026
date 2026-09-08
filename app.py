@@ -629,31 +629,41 @@ with tabs[5]:
                     "Runners": len(z),
                 })
 
-        standings = pd.DataFrame(rows).sort_values("Score").reset_index(drop=True)
-        if not standings.empty:
+        standings = pd.DataFrame(rows, columns=["Team", "Score", "5 Avg", "7 Depth", "Runners"])
+
+        if standings.empty:
+            st.info(
+                f"No teams currently have five valid {wd_label} {wd_gender.lower()} "
+                "season-best runners in the database."
+            )
+        else:
+            standings = standings.sort_values("Score").reset_index(drop=True)
             standings["Rank"] = range(1, len(standings) + 1)
+
             me = standings[standings["Team"] == wd_team]
+            a, b, c = st.columns(3)
+
             if not me.empty:
                 rank = int(me["Rank"].iloc[0])
-                score = me["Score"].iloc[0]
-                ahead = standings[standings["Rank"] == rank - 1]
-                behind = standings[standings["Rank"] == rank + 1]
+                score = float(me["Score"].iloc[0])
 
-                a, b, c = st.columns(3)
                 a.metric("Projected rank", f"#{rank}")
                 b.metric("Projected score", f"{score:.0f}")
-                if not ahead.empty:
-                    b = behind
-                    c.metric("Behind next team", f"{score - standings.loc[rank-2, 'Score']:.0f} pts")
-                elif rank == 1:
-                    c.metric("Standing", "Projected #1")
+
+                if rank > 1:
+                    ahead_score = float(standings.loc[rank - 2, "Score"])
+                    c.metric("Points behind next team", f"{score - ahead_score:.0f}")
                 else:
-                    c.metric("Standing", "—")
+                    c.metric("Standing", "Projected #1")
+            else:
+                a.metric("Projected rank", "N/A")
+                b.metric("Projected score", "N/A")
+                c.metric("Standing", "Not enough runners")
 
             display = standings.copy()
             display["Score"] = display["Score"].map(lambda x: f"{x:.0f}")
             display["5 Avg"] = display["5 Avg"].map(fmt)
-            display["7 Depth"] = display["7 Depth"].map(lambda x: fmt_gap(x))
+            display["7 Depth"] = display["7 Depth"].map(fmt_gap)
             st.dataframe(
                 display[["Rank", "Team", "Score", "5 Avg", "7 Depth", "Runners"]],
                 hide_index=True,
