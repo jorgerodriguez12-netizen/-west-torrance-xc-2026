@@ -381,10 +381,37 @@ with tabs[4]:
 # 6 Athlete Profiles
 with tabs[5]:
     st.subheader("👤 Athlete Profiles")
+
     athlete_names = sorted(df["athlete"].unique().tolist())
-    selected_athlete = st.selectbox("Athlete", athlete_names, key="profile_athlete")
-    ah = df[df["athlete"] == selected_athlete].sort_values("date").copy()
-    if not ah.empty:
+
+    # Search first, then choose from the much smaller filtered dropdown.
+    # This is easier to use when the database contains thousands of athletes.
+    athlete_search = st.text_input(
+        "🔎 Search athlete",
+        placeholder="Type an athlete's name...",
+        key="athlete_search",
+        type="search",
+    )
+
+    if athlete_search.strip():
+        search_term = athlete_search.strip().lower()
+        filtered_athletes = [
+            name for name in athlete_names
+            if search_term in name.lower()
+        ]
+    else:
+        filtered_athletes = athlete_names
+
+    if not filtered_athletes:
+        st.warning("No athletes found. Try a different name.")
+    else:
+        selected_athlete = st.selectbox(
+            f"Select athlete ({len(filtered_athletes)} matches)",
+            filtered_athletes,
+            key="profile_athlete",
+        )
+        ah = df[df["athlete"] == selected_athlete].sort_values("date").copy()
+    if filtered_athletes and not ah.empty:
         info1, info2, info3, info4 = st.columns(4)
         info1.metric("Team", ah["team"].mode().iloc[0])
         info2.metric("Grade", str(int(ah["grade"].dropna().iloc[-1])) if ah["grade"].notna().any() else "—")
@@ -590,5 +617,4 @@ with tabs[11]:
         st.info("No meet metadata available.")
 
 st.divider()
-st.caption("Analytics are limited to the results currently loaded. CIF/league/division fields will be surfaced when reliable team metadata is added; the app does not guess classifications."
-          )
+st.caption("Analytics are limited to the results currently loaded. CIF/league/division fields will be surfaced when reliable team metadata is added; the app does not guess classifications.")
