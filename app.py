@@ -591,3 +591,4 @@ with tabs[11]:
 
 st.divider()
 st.caption("Analytics are limited to the results currently loaded. CIF/league/division fields will be surfaced when reliable team metadata is added; the app does not guess classifications."
+          )
