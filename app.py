@@ -142,11 +142,26 @@ def load_results():
             df[c] = ""
         df[c] = df[c].fillna("").astype(str).str.strip()
 
-    # Exclude duplicate/administrative "Merge" races from analytics.
-    # Meets such as Great Cow Run can contain both a Merge race and the
-    # actual Varsity/Sophomore/etc. races. The Merge race is redundant,
-    # so it should not appear in rankings, athlete histories, or profiles.
-    df = df[~df["race"].str.contains(r"\bmerge\b", case=False, regex=True, na=False)].copy()
+    # Handle "Merge" races intelligently.
+    # Some meets (for example Great Cow Run) contain a Merge race in
+    # addition to actual Varsity/JV/etc. races. In those cases, Merge is
+    # a redundant combined race and should not be treated as another
+    # category. However, some meets (for example PR City in the current
+    # source data) may only be imported as "Merge". We keep those results
+    # rather than accidentally deleting the entire meet.
+    merge_mask = df["race"].str.contains(r"\bmerge\b", case=False, regex=True, na=False)
+    non_merge_mask = ~merge_mask & df["race"].ne("")
+
+    if merge_mask.any():
+        # Treat the same meet on the same date as one event. If that event
+        # has at least one named non-Merge race, suppress only its Merge
+        # rows. If Merge is the only race available, keep it.
+        event_has_non_merge = (
+            df.assign(_non_merge=non_merge_mask)
+            .groupby(["meet", "date"], dropna=False)["_non_merge"]
+            .transform("any")
+        )
+        df = df[~merge_mask | ~event_has_non_merge].copy()
 
     # Remove obvious PDF column-merge/corrupt records.
     bad_team = df["team"].str.contains(r"\)\s+\d+\s+[A-Z][A-Za-z'-]+", regex=True, na=False)
