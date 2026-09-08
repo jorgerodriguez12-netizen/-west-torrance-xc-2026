@@ -1,6 +1,1 @@
-date,meet,city,gender,race,distance_m,athlete,grade,team,time_sec,time,place,course,source
-2026-09-05,Example XC Meet,"Torrance, CA",Boys,Varsity Boys,5000,Sample Runner A,12,West Torrance,1002.31,16:42.31,1,Example Course,sample
-2026-09-05,Example XC Meet,"Torrance, CA",Boys,Varsity Boys,5000,Sample Runner B,11,West Torrance,1020.1,17:00.10,2,Example Course,sample
-2026-09-05,Example XC Meet,"Torrance, CA",Boys,Varsity Boys,5000,Sample Runner C,12,West Torrance,1034.25,17:14.25,3,Example Course,sample
-2026-09-05,Example XC Meet,"Torrance, CA",Boys,Varsity Boys,5000,Sample Runner D,10,West Torrance,1042.5,17:22.50,4,Example Course,sample
-2026-09-05,Example XC Meet,"Torrance, CA",Boys,Varsity Boys,5000,Sample Runner E,11,West Torrance,1050.75,17:30.75,5,Example Course,sample
+result_id,date,meet,city,gender,race,distance_m,athlete,grade,team,time_sec,time,place,points,course,source_url

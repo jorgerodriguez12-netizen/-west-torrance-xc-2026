@@ -1,2 +1,1 @@
-date,meet,city,status,source
-2026-09-05,Example XC Meet,Torrance CA,Sample,sample
+meet_id,date,meet,city,source_url,status
