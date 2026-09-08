@@ -218,38 +218,100 @@ with tabs[1]:
 # Team rankings
 with tabs[2]:
     st.subheader("Team depth rankings")
-    st.caption("Season-best average of each team's fastest 5, 7 and 10 runners.")
+    st.caption("Rank teams using their season-best runners at a specific race distance.")
 
-    x = f.dropna(subset=["time_sec"]).sort_values("time_sec")
-    best = x.groupby(
-        ["gender", "athlete", "team", "distance_m"],
-        as_index=False,
-    ).first()
+    # Team Rankings gets its own distance selector so you can compare
+    # 2 Mile, 4.8K, 5K, etc. independently of the other dashboard tabs.
+    team_distances = sorted(f["distance_m"].dropna().unique().tolist())
 
-    rows = []
-    for (g, t, d), z in best.groupby(["gender", "team", "distance_m"]):
-        vals = np.sort(z["time_sec"].to_numpy())
-        row = {
-            "Gender": g,
-            "Team": t,
-            "Distance": fmt_distance(d),
-            "Runners": len(vals),
-            "5 Avg": np.mean(vals[:5]) if len(vals) >= 5 else np.nan,
-            "7 Avg": np.mean(vals[:7]) if len(vals) >= 7 else np.nan,
-            "10 Avg": np.mean(vals[:10]) if len(vals) >= 10 else np.nan,
-        }
-        rows.append(row)
+    if not team_distances:
+        st.warning("No race-distance data is available.")
+    else:
+        dcol, gcol, rcol = st.columns(3)
 
-    tr = pd.DataFrame(rows)
+        with dcol:
+            team_distance_label = st.selectbox(
+                "Race distance",
+                [fmt_distance(d) for d in team_distances],
+                key="team_ranking_distance",
+            )
+            team_distance = next(
+                d for d in team_distances
+                if fmt_distance(d) == team_distance_label
+            )
 
-    metric = st.selectbox("Rank teams by", ["5 Avg", "7 Avg", "10 Avg"])
-    if not tr.empty:
-        tr = tr.sort_values(["Gender", metric], na_position="last").copy()
-        for col in ["5 Avg", "7 Avg", "10 Avg"]:
-            tr[col] = tr[col].map(fmt)
+        with gcol:
+            team_gender = st.selectbox(
+                "Gender",
+                ["Boys", "Girls", "All"],
+                key="team_ranking_gender",
+            )
 
-        tr.insert(0, "Rank", range(1, len(tr) + 1))
-        st.dataframe(tr, hide_index=True, use_container_width=True)
+        with rcol:
+            metric = st.selectbox(
+                "Rank teams by",
+                ["5 Avg", "7 Avg", "10 Avg"],
+                key="team_ranking_metric",
+            )
+
+        x = f[
+            f["distance_m"].sub(team_distance).abs().lt(75)
+        ].dropna(subset=["time_sec"]).sort_values("time_sec")
+
+        if team_gender != "All":
+            x = x[x["gender"].astype(str).str.lower() == team_gender.lower()]
+
+        # One season-best performance per athlete for this distance.
+        best = x.groupby(
+            ["gender", "athlete", "team"],
+            as_index=False,
+        ).first()
+
+        rows = []
+        for (g, t), z in best.groupby(["gender", "team"]):
+            vals = np.sort(z["time_sec"].to_numpy())
+            rows.append({
+                "Gender": g,
+                "Team": t,
+                "Distance": team_distance_label,
+                "Runners": len(vals),
+                "5 Avg": np.mean(vals[:5]) if len(vals) >= 5 else np.nan,
+                "7 Avg": np.mean(vals[:7]) if len(vals) >= 7 else np.nan,
+                "10 Avg": np.mean(vals[:10]) if len(vals) >= 10 else np.nan,
+            })
+
+        tr = pd.DataFrame(rows)
+
+        if tr.empty:
+            st.info(f"No team results found for {team_distance_label}.")
+        else:
+            tr = tr.sort_values(metric, na_position="last").copy()
+
+            # Only rank teams that actually have enough runners for the
+            # selected depth metric.
+            required = {"5 Avg": 5, "7 Avg": 7, "10 Avg": 10}[metric]
+            tr = tr[tr["Runners"] >= required].copy()
+            tr.insert(0, "Rank", range(1, len(tr) + 1))
+
+            for col in ["5 Avg", "7 Avg", "10 Avg"]:
+                tr[col] = tr[col].map(fmt)
+
+            st.dataframe(
+                tr[
+                    [
+                        "Rank",
+                        "Gender",
+                        "Team",
+                        "Distance",
+                        "Runners",
+                        "5 Avg",
+                        "7 Avg",
+                        "10 Avg",
+                    ]
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
 
 # West Torrance
 with tabs[3]:
