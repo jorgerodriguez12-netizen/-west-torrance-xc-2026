@@ -24,6 +24,26 @@ def fmt(v):
     return f"{int(v // 60)}:{v % 60:05.2f}"
 
 
+def fmt_distance(m):
+    """Display race distance as a running distance, not a time."""
+    if pd.isna(m):
+        return "—"
+    m = float(m)
+    if abs(m - 5000) < 75:
+        return "5K"
+    if abs(m - 3000) < 75:
+        return "3K"
+    if abs(m - 3200) < 75:
+        return "2 Mile"
+    if abs(m - 1609.344) < 35:
+        return "1 Mile"
+    if abs(m - 8046.72) < 100:
+        return "5 Mile"
+    if m >= 1000:
+        return f"{m / 1000:.1f}K"
+    return f"{m:.0f}m"
+
+
 def fmt_gap(v):
     if pd.isna(v):
         return "—"
@@ -111,8 +131,8 @@ gender = st.sidebar.selectbox("Gender", genders)
 distance_values = sorted(df["distance_m"].dropna().unique().tolist())
 distance_labels = {"All": None}
 for d in distance_values:
-    distance_labels[fmt(d)] = d
-distance_choice = st.sidebar.selectbox("Distance", ["All"] + [fmt(d) for d in distance_values])
+    distance_labels[fmt_distance(d)] = d
+distance_choice = st.sidebar.selectbox("Distance", ["All"] + [fmt_distance(d) for d in distance_values])
 
 teams = ["All"] + sorted(df["team"].dropna().astype(str).unique().tolist())
 team_choice = st.sidebar.selectbox("Team", teams)
@@ -173,7 +193,7 @@ with tabs[1]:
         as_index=False,
     ).first()
     x["Season Best"] = x["time_sec"].map(fmt)
-    x["Distance"] = x["distance_m"].map(fmt)
+    x["Distance"] = x["distance_m"].map(fmt_distance)
 
     x = x.sort_values(["gender", "time_sec"])
     x.insert(0, "Rank", range(1, len(x) + 1))
@@ -212,7 +232,7 @@ with tabs[2]:
         row = {
             "Gender": g,
             "Team": t,
-            "Distance": fmt(d),
+            "Distance": fmt_distance(d),
             "Runners": len(vals),
             "5 Avg": np.mean(vals[:5]) if len(vals) >= 5 else np.nan,
             "7 Avg": np.mean(vals[:7]) if len(vals) >= 7 else np.nan,
@@ -248,7 +268,7 @@ with tabs[3]:
             as_index=False,
         ).first()
         best["Season Best"] = best["time_sec"].map(fmt)
-        best["Distance"] = best["distance_m"].map(fmt)
+        best["Distance"] = best["distance_m"].map(fmt_distance)
 
         for g in ["Boys", "Girls"]:
             z = best[best["gender"].astype(str).str.lower() == g.lower()].sort_values(
