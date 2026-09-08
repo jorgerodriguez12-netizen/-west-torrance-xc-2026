@@ -1,113 +1,361 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
+import re
 from pathlib import Path
 
-st.set_page_config(page_title="West Torrance XC 2026", page_icon="🏃", layout="wide")
-BASE=Path(__file__).parent
-RESULTS=BASE/"data/results.csv"
-MEETS=BASE/"data/meets.csv"
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(
+    page_title="California XC 2026",
+    page_icon="🏃",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+BASE = Path(__file__).parent
+RESULTS = BASE / "data" / "results.csv"
+MEETS = BASE / "data" / "meets.csv"
+
+
+def fmt(v):
+    if pd.isna(v):
+        return "—"
+    v = float(v)
+    return f"{int(v // 60)}:{v % 60:05.2f}"
+
+
+def fmt_gap(v):
+    if pd.isna(v):
+        return "—"
+    v = float(v)
+    return f"+{v:.1f}s"
+
 
 @st.cache_data(ttl=300)
 def load_results():
-    if not RESULTS.exists(): return pd.DataFrame()
-    x=pd.read_csv(RESULTS)
-    if x.empty:return x
-    x["date"]=pd.to_datetime(x["date"],errors="coerce")
-    x["time_sec"]=pd.to_numeric(x["time_sec"],errors="coerce")
-    return x
+    if not RESULTS.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(RESULTS, low_memory=False)
+    if df.empty:
+        return df
+
+    for c in ["date", "time_sec", "place", "grade", "distance_m", "points"]:
+        if c in df:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    # Remove obvious PDF column-merges/corrupt records.
+    bad_team = df["team"].astype(str).str.contains(
+        r"\)\s+\d+\s+[A-Z][A-Za-z'-]+", regex=True, na=False
+    )
+    bad_athlete = df["athlete"].astype(str).str.contains(
+        r"\s+\d{1,2}\s+[A-Z][A-Za-z'-]+\s+\d{1,2}\s+",
+        regex=True,
+        na=False,
+    )
+
+    df = df[~bad_team & ~bad_athlete].copy()
+
+    # Normalize common wrapped team names created by PDF extraction.
+    replacements = {
+        "La Quinta (La": "La Quinta (La Quinta)",
+        "Canyon (Canyon": "Canyon (Canyon Country)",
+    }
+    df["team"] = df["team"].astype(str).replace(replacements)
+
+    # Keep only plausible race results.
+    df = df[
+        df["athlete"].notna()
+        & df["team"].notna()
+        & df["time_sec"].between(180, 7200, inclusive="both")
+        & df["grade"].between(1, 12, inclusive="both")
+    ].copy()
+
+    # Exact duplicate protection.
+    df = df.drop_duplicates(
+        subset=["date", "meet", "race", "athlete", "team", "time_sec"],
+        keep="first",
+    )
+
+    return df
+
 
 @st.cache_data(ttl=300)
 def load_meets():
-    if not MEETS.exists(): return pd.DataFrame()
-    x=pd.read_csv(MEETS)
-    if not x.empty:x["date"]=pd.to_datetime(x["date"],errors="coerce")
+    if not MEETS.exists():
+        return pd.DataFrame()
+    x = pd.read_csv(MEETS)
+    if not x.empty:
+        x["date"] = pd.to_datetime(x["date"], errors="coerce")
     return x
 
-def fmt(v):
-    if pd.isna(v): return "—"
-    v=float(v); return f"{int(v//60)}:{v%60:05.2f}"
 
-df=load_results(); meets=load_meets()
-st.title("🏃 West Torrance XC")
-st.caption("2026 California High School Cross Country Analytics")
+df = load_results()
+meets = load_meets()
+
+st.title("🏃 California XC 2026")
+st.caption("Automated California high-school cross-country analytics • West Torrance focused")
 
 if df.empty:
-    st.warning("The live database is ready, but no results have been imported yet.")
-    st.write("The automatic importer checks the connected results providers and adds new completed races.")
-else:
-    st.sidebar.header("Filters")
-    gender=st.sidebar.selectbox("Gender",["All"]+sorted(df.gender.dropna().astype(str).unique()))
-    team=st.sidebar.selectbox("Team",["All"]+sorted(df.team.dropna().astype(str).unique()))
-    dist=st.sidebar.selectbox("Distance",["All"]+sorted(df.distance_m.dropna().astype(str).unique()))
-    f=df.copy()
-    if gender!="All": f=f[f.gender.astype(str)==gender]
-    if team!="All": f=f[f.team.astype(str)==team]
-    if dist!="All": f=f[f.distance_m.astype(str)==dist]
-    a,b,c,d=st.columns(4)
-    a.metric("Results",f"{len(f):,}"); b.metric("Athletes",f"{f.athlete.nunique():,}")
-    c.metric("Teams",f"{f.team.nunique():,}"); d.metric("Meets",f"{f.meet.nunique():,}")
-    t1,t2,t3,t4,t5=st.tabs(["🔥 Today","🏆 Season","🏫 Teams","🔵 West Torrance","📅 Meets"])
+    st.error("No race results are currently available.")
+    st.stop()
 
-    with t1:
-        st.subheader("Top 20 performances by race day")
-        dates=sorted(f.date.dropna().dt.date.unique(),reverse=True)
-        if dates:
-            chosen=st.selectbox("Race date",dates)
-            day=f[f.date.dt.date==chosen].dropna(subset=["time_sec"])
-            for g in ["Boys","Girls"]:
-                x=day[day.gender.str.lower()==g.lower()].sort_values("time_sec").head(20).copy()
-                if not x.empty:
-                    x.insert(0,"Rank",range(1,len(x)+1)); x["Time"]=x.time_sec.map(fmt)
-                    st.markdown(f"**{g} — Top 20**")
-                    st.dataframe(x[["Rank","athlete","team","Time","meet","race"]],hide_index=True,use_container_width=True)
+# Sidebar filters
+st.sidebar.header("Filters")
 
-    with t2:
-        st.subheader("2026 Season Bests")
-        x=f.dropna(subset=["time_sec"]).sort_values("time_sec")
-        # one best mark per athlete for each distance/gender
-        x=x.groupby(["gender","athlete","team","distance_m"],as_index=False).first()
-        x["Season Best"]=x.time_sec.map(fmt); x.insert(0,"Rank",range(1,len(x)+1))
-        st.dataframe(x[["Rank","gender","athlete","team","distance_m","Season Best","meet","date"]],
-                     hide_index=True,use_container_width=True)
+genders = ["All"] + sorted(df["gender"].dropna().astype(str).unique().tolist())
+gender = st.sidebar.selectbox("Gender", genders)
 
-    with t3:
-        st.subheader("Team depth")
-        st.caption("Season-best depth; same-meet scoring is retained in the race-level data.")
-        x=f.dropna(subset=["time_sec"]).sort_values("time_sec")
-        best=x.groupby(["gender","athlete","team","distance_m"],as_index=False).first()
-        rows=[]
-        for (g,t,distv),z in best.groupby(["gender","team","distance_m"]):
-            v=np.sort(z.time_sec.values)
-            rows.append({"Gender":g,"Team":t,"Distance":distv,"Runners":len(v),
-                         "5 Avg":np.mean(v[:5]) if len(v)>=5 else np.nan,
-                         "7 Avg":np.mean(v[:7]) if len(v)>=7 else np.nan,
-                         "10 Avg":np.mean(v[:10]) if len(v)>=10 else np.nan})
-        tr=pd.DataFrame(rows)
-        for col in ["5 Avg","7 Avg","10 Avg"]: tr[col]=tr[col].map(fmt)
-        st.dataframe(tr.sort_values(["Gender","5 Avg"]),hide_index=True,use_container_width=True)
+distance_values = sorted(df["distance_m"].dropna().unique().tolist())
+distance_labels = {"All": None}
+for d in distance_values:
+    distance_labels[fmt(d)] = d
+distance_choice = st.sidebar.selectbox("Distance", ["All"] + [fmt(d) for d in distance_values])
 
-    with t4:
-        st.subheader("West Torrance — 2026")
-        wt=df[df.team.astype(str).str.contains("West Torrance",case=False,na=False)].dropna(subset=["time_sec"])
-        if wt.empty: st.info("No West Torrance results are connected yet.")
+teams = ["All"] + sorted(df["team"].dropna().astype(str).unique().tolist())
+team_choice = st.sidebar.selectbox("Team", teams)
+
+f = df.copy()
+if gender != "All":
+    f = f[f["gender"].astype(str) == gender]
+if distance_choice != "All":
+    f = f[f["distance_m"] == distance_labels[distance_choice]]
+if team_choice != "All":
+    f = f[f["team"].astype(str) == team_choice]
+
+# KPI row
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Results", f"{len(f):,}")
+c2.metric("Athletes", f["athlete"].nunique())
+c3.metric("Teams", f["team"].nunique())
+c4.metric("Meets", f["meet"].nunique())
+
+tabs = st.tabs([
+    "🔥 Daily Top 20",
+    "🏆 Season Bests",
+    "🏫 Team Rankings",
+    "🔵 West Torrance",
+    "⚔️ Team Matchup",
+    "📅 Meets",
+])
+
+# Daily top 20
+with tabs[0]:
+    st.subheader("Daily fastest performances")
+
+    dates = sorted(f["date"].dropna().dt.date.unique(), reverse=True)
+    if dates:
+        chosen = st.selectbox("Race date", dates, key="daily_date")
+        day = f[f["date"].dt.date == chosen].dropna(subset=["time_sec"])
+
+        for g in ["Boys", "Girls"]:
+            x = day[day["gender"].astype(str).str.lower() == g.lower()]
+            x = x.sort_values("time_sec").head(20).copy()
+
+            if not x.empty:
+                x.insert(0, "Rank", range(1, len(x) + 1))
+                x["Time"] = x["time_sec"].map(fmt)
+                st.markdown(f"### {g}")
+                st.dataframe(
+                    x[["Rank", "athlete", "team", "Time", "meet", "race"]],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+# Season bests
+with tabs[1]:
+    st.subheader("2026 season bests")
+    x = f.dropna(subset=["time_sec"]).sort_values("time_sec")
+    x = x.groupby(
+        ["gender", "athlete", "team", "distance_m"],
+        as_index=False,
+    ).first()
+    x["Season Best"] = x["time_sec"].map(fmt)
+    x["Distance"] = x["distance_m"].map(fmt)
+
+    x = x.sort_values(["gender", "time_sec"])
+    x.insert(0, "Rank", range(1, len(x) + 1))
+
+    st.dataframe(
+        x[
+            [
+                "Rank",
+                "gender",
+                "athlete",
+                "team",
+                "Distance",
+                "Season Best",
+                "meet",
+                "date",
+            ]
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+# Team rankings
+with tabs[2]:
+    st.subheader("Team depth rankings")
+    st.caption("Season-best average of each team's fastest 5, 7 and 10 runners.")
+
+    x = f.dropna(subset=["time_sec"]).sort_values("time_sec")
+    best = x.groupby(
+        ["gender", "athlete", "team", "distance_m"],
+        as_index=False,
+    ).first()
+
+    rows = []
+    for (g, t, d), z in best.groupby(["gender", "team", "distance_m"]):
+        vals = np.sort(z["time_sec"].to_numpy())
+        row = {
+            "Gender": g,
+            "Team": t,
+            "Distance": fmt(d),
+            "Runners": len(vals),
+            "5 Avg": np.mean(vals[:5]) if len(vals) >= 5 else np.nan,
+            "7 Avg": np.mean(vals[:7]) if len(vals) >= 7 else np.nan,
+            "10 Avg": np.mean(vals[:10]) if len(vals) >= 10 else np.nan,
+        }
+        rows.append(row)
+
+    tr = pd.DataFrame(rows)
+
+    metric = st.selectbox("Rank teams by", ["5 Avg", "7 Avg", "10 Avg"])
+    if not tr.empty:
+        tr = tr.sort_values(["Gender", metric], na_position="last").copy()
+        for col in ["5 Avg", "7 Avg", "10 Avg"]:
+            tr[col] = tr[col].map(fmt)
+
+        tr.insert(0, "Rank", range(1, len(tr) + 1))
+        st.dataframe(tr, hide_index=True, use_container_width=True)
+
+# West Torrance
+with tabs[3]:
+    st.subheader("🔵 West Torrance")
+    wt = df[
+        df["team"].astype(str).str.contains(
+            "West Torrance", case=False, na=False
+        )
+    ].dropna(subset=["time_sec"]).copy()
+
+    if wt.empty:
+        st.warning("No West Torrance results found in the current database.")
+    else:
+        best = wt.sort_values("time_sec").groupby(
+            ["gender", "athlete", "distance_m"],
+            as_index=False,
+        ).first()
+        best["Season Best"] = best["time_sec"].map(fmt)
+        best["Distance"] = best["distance_m"].map(fmt)
+
+        for g in ["Boys", "Girls"]:
+            z = best[best["gender"].astype(str).str.lower() == g.lower()].sort_values(
+                "time_sec"
+            ).copy()
+
+            if z.empty:
+                continue
+
+            st.markdown(f"### {g}")
+
+            vals = z["time_sec"].to_numpy()
+            a, b, c, d = st.columns(4)
+            a.metric("#1", fmt(vals[0]))
+            b.metric("5-runner avg", fmt(np.mean(vals[:5])) if len(vals) >= 5 else "—")
+            c.metric("7-runner avg", fmt(np.mean(vals[:7])) if len(vals) >= 7 else "—")
+            d.metric("Runners", len(vals))
+
+            z.insert(0, "Rank", range(1, len(z) + 1))
+            st.dataframe(
+                z[
+                    [
+                        "Rank",
+                        "athlete",
+                        "grade",
+                        "Distance",
+                        "Season Best",
+                        "meet",
+                        "date",
+                    ]
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+
+# Team matchup
+with tabs[4]:
+    st.subheader("⚔️ Team matchup")
+    st.caption("Compare two teams using their fastest available runners at the selected distance.")
+
+    all_teams = sorted(
+        df["team"].dropna().astype(str).unique().tolist()
+    )
+
+    if len(all_teams) >= 2:
+        left, right = st.columns(2)
+        with left:
+            team_a = st.selectbox("Team A", all_teams, index=all_teams.index("West Torrance") if "West Torrance" in all_teams else 0)
+        with right:
+            team_b = st.selectbox("Team B", all_teams, index=1)
+
+        eligible = f.dropna(subset=["time_sec"]).copy()
+
+        def team_depth(team_name):
+            z = eligible[eligible["team"].astype(str) == team_name]
+            z = z.sort_values("time_sec").groupby(
+                ["gender", "athlete", "distance_m"],
+                as_index=False,
+            ).first()
+            return z.sort_values("time_sec")
+
+        a_df = team_depth(team_a)
+        b_df = team_depth(team_b)
+
+        g_choice = st.selectbox("Gender", ["Boys", "Girls"], key="match_gender")
+        a_df = a_df[a_df["gender"].astype(str).str.lower() == g_choice.lower()]
+        b_df = b_df[b_df["gender"].astype(str).str.lower() == g_choice.lower()]
+
+        a_vals = a_df["time_sec"].to_numpy()
+        b_vals = b_df["time_sec"].to_numpy()
+
+        if len(a_vals) >= 5 and len(b_vals) >= 5:
+            aa, bb, cc = st.columns(3)
+            a5 = np.mean(a_vals[:5])
+            b5 = np.mean(b_vals[:5])
+            aa.metric(team_a, fmt(a5))
+            bb.metric(team_b, fmt(b5))
+            cc.metric(
+                "Difference",
+                fmt(abs(a5 - b5)),
+                delta=f"{team_a} faster" if a5 < b5 else f"{team_b} faster",
+                delta_color="normal",
+            )
+
+            comp = pd.DataFrame({
+                "Runner": range(1, min(10, len(a_vals), len(b_vals)) + 1),
+                team_a: [fmt(x) for x in a_vals[:10]],
+                team_b: [fmt(x) for x in b_vals[:10]],
+            })
+            st.dataframe(comp, hide_index=True, use_container_width=True)
         else:
-            best=wt.sort_values("time_sec").groupby(["gender","athlete","distance_m"],as_index=False).first()
-            best["Season Best"]=best.time_sec.map(fmt)
-            st.dataframe(best[["gender","athlete","grade","distance_m","Season Best","meet","date"]],
-                         hide_index=True,use_container_width=True)
-            for g in ["Boys","Girls"]:
-                vals=np.sort(best[best.gender.str.lower()==g.lower()].time_sec.values)
-                if len(vals):
-                    a,b,c,d=st.columns(4)
-                    a.metric(f"{g} #1",fmt(vals[0]))
-                    b.metric(f"{g} 5-runner avg",fmt(np.mean(vals[:5])) if len(vals)>=5 else "—")
-                    c.metric(f"{g} 7-runner avg",fmt(np.mean(vals[:7])) if len(vals)>=7 else "—")
-                    d.metric(f"{g} depth",len(vals))
+            st.info("Both teams need at least five runners in the selected category.")
 
-    with t5:
-        st.subheader("2026 Meet Calendar")
-        st.dataframe(meets.sort_values("date",ascending=False),hide_index=True,use_container_width=True)
+# Meets
+with tabs[5]:
+    st.subheader("2026 meet calendar")
+    if not meets.empty:
+        st.dataframe(
+            meets.sort_values("date", ascending=False),
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.info("No meet metadata available.")
 
 st.divider()
-st.caption("Automatic results ingestion is limited to public/permitted result sources.")
+st.caption(
+    "Data is automatically refreshed from the connected public/permitted results sources. "
+    "Rows that fail basic integrity checks are excluded from analytics."
+)
